@@ -13,6 +13,9 @@ a program such as [PDB2PQR](http://www.poissonboltzmann.org/pdb2pqr/) to add mis
 atoms prior to use of this program. Additionally, it assumes all atoms and uniquely
 numbered and residues have unique number+insertion code.
 
+CHARMM RTF files may be found by downloading the [topology files from Alex MacKerell]
+(http://mackerell.umaryland.edu/CHARMM_ff_params.html)
+
 ## AUTHOR
 David Hall <david@acpharis.com>
 
