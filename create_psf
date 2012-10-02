@@ -25,7 +25,7 @@ import re
 import math
 
 if len(sys.argv) < 3:
-	sys.stderr.write("usage: create_psf.py pdb rtf out_psf")
+	sys.stderr.write("usage: create_psf.py pdb rtf out_psf\n")
 	sys.exit(1)
 
 pdb_file = sys.argv[1]
