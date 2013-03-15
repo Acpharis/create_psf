@@ -14,10 +14,14 @@ atoms prior to use of this program. Additionally, it assumes all atoms and uniqu
 numbered and residues have unique number+insertion code.
 
 CHARMM RTF files may be found by downloading the [topology files from Alex MacKerell]
-(http://mackerell.umaryland.edu/CHARMM_ff_params.html)
+(http://mackerell.umaryland.edu/CHARMM_ff_params.html) or by using charmmgen from
+[AmberTools](http://ambermd.org/#AmberTools).
 
 ## AUTHOR
 David Hall <david@acpharis.com>
+
+## Funding
+This work was partially funded by NIGMS grants R41GM097907 and R41GM101907
 
 ## NOTES
 Contributions that break CentOS 5 support will not be accepted
