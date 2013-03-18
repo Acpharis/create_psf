@@ -57,7 +57,7 @@ for line in rtf:
 		#set current residue
 		fields = line.split()
 		curr_res_name= fields[1]
-		residues[curr_res_name] = {'atoms':{}, 'bonds': [], 'imphis': []}
+		residues[curr_res_name] = {'atoms':{}, 'bonds': [], 'imphis': [], 'donors': [], 'acceptors': []}
 
 	if line[:4] == 'ATOM':
 		#add atom within current residue
@@ -104,6 +104,40 @@ for line in rtf:
 			atom1 = fields.pop()
 			residues[curr_res_name]['imphis'].append([atom1, atom2, atom3, atom4])
 
+
+	if line[:4] == 'DONO':
+		#add hb donors within current residue
+		if curr_res_name is None:
+			print "error: donors before residue name"
+			sys.exit(1)
+		comment = line.find('!')
+		if comment != -1:
+			line = line[:comment]
+		fields    = line.split()
+		while len(fields) > 1:
+			atom1 = fields.pop()
+			atom2 = fields.pop()
+			residues[curr_res_name]['donors'].append([atom1, atom2])
+
+
+	if line[:4] == 'ACCE':
+		#add hb acceptors within current residue
+		if curr_res_name is None:
+			print "error: acceptors before residue name"
+			sys.exit(1)
+		comment = line.find('!')
+		if comment != -1:
+			line = line[:comment]
+		fields    = line.split()
+		while len(fields) > 1:
+			atom2 = fields.pop()
+			if len(fields) ==1:
+				atom1 = atom2
+				atom2 = None
+			else:
+				atom1 = fields.pop()
+			residues[curr_res_name]['acceptors'].append([atom1, atom2])
+
 rtf.close()
 
 
@@ -128,7 +162,7 @@ for line in pdb:
 		mass = atom_types[residues[residue_name]['atoms'][atom_name]['type']]['mass']
 		atoms.append({'atom_i' : atom_i, 'chain_id': chain_id, 'residue_num': residue_num, 'residue_alt': residue_alt,
 		              'residue_id': residue_id, 'residue_name': residue_name, 'atom_name': atom_name, 'atom_type_id': atom_type_id,
-		              'charge': charge, 'mass': mass, 'disulfide': False, 'x': x, 'y': y, 'z': z, 'bonds': [], 'imphis': []})
+		              'charge': charge, 'mass': mass, 'disulfide': False, 'x': x, 'y': y, 'z': z, 'bonds': [], 'imphis': [], 'donors': [], 'acceptors': []})
 
 pdb.close()
 
@@ -291,6 +325,33 @@ for i in xrange(len(pdb_residues)):
 					continue
 				atom['imphis'].append( (atom1, atom2, atom3) )
 
+	#HB donors
+	donor_list = residues[residue_name]['donors']
+
+	for atom in residue:
+		name = atom['atom_name']
+		for donor in donor_list:
+			if name == donor[0]: #we have a hydrogen bond donor
+				for j in xrange(len(residue)):
+					if residue[j]['atom_name'] ==  donor[1]:
+						atom['donors'].append(residue[j]['atom_i'])
+
+	#HB acceptors
+	acceptor_list = residues[residue_name]['acceptors']
+
+	for atom in residue:
+		name = atom['atom_name']
+		for acceptor in acceptor_list:
+			if name == acceptor[0]: #we have a hydrogen bond donor
+				print atom['atom_i']
+				if acceptor[1] is not None:
+					for j in xrange(len(residue)):
+						if residue[j]['atom_name'] ==  acceptor[1]:
+							atom['acceptors'].append(residue[j]['atom_i'])
+				else:
+					print atom['atom_i']
+					atom['acceptors'].append(0)
+
 bonds = []
 for atom in atoms:
 	atom_i = atom['atom_i']
@@ -302,6 +363,18 @@ for atom in atoms:
 	atom_i = atom['atom_i']
 	for imphi in atom['imphis']:
 		imphis.append( (atom_i, imphi[0], imphi[1], imphi[2]) )
+
+donors = []
+for atom in atoms:
+	atom_i = atom['atom_i']
+	for donor in atom['donors']:
+		donors.append( (atom_i, donor) )
+
+acceptors = []
+for atom in atoms:
+	atom_i = atom['atom_i']
+	for acceptor in atom['acceptors']:
+		acceptors.append( (atom_i, acceptor) )
 
 #angles
 thetas = set()
@@ -403,5 +476,25 @@ for imphi in imphis:
 	psf_out.write("%8g%8g%8g%8g" % imphi)
 	imphi_i += 1
 psf_out.write("\n") #finish off end of phis with new line
+
+psf_out.write("\n")
+psf_out.write("%8g !NDON: donors" % len(donors) )
+donor_i = 0
+for donor in donors:
+	if donor_i % 4 == 0:
+		psf_out.write("\n")
+	psf_out.write("%8g%8g" % donor)
+	donor_i += 1
+psf_out.write("\n") #finish off end of donors with new line
+
+psf_out.write("\n")
+psf_out.write("%8g !NACC: acceptors" % len(acceptors) )
+acceptor_i = 0
+for acceptor in acceptors:
+	if acceptor_i % 4 == 0:
+		psf_out.write("\n")
+	psf_out.write("%8g%8g" % acceptor)
+	acceptor_i += 1
+psf_out.write("\n") #finish off end of acceptors with new line
 
 psf_out.close()
