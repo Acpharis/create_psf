@@ -345,13 +345,11 @@ for i in xrange(len(pdb_residues)):
 		name = atom['atom_name']
 		for acceptor in acceptor_list:
 			if name == acceptor[0]: #we have a hydrogen bond donor
-				print atom['atom_i']
 				if acceptor[1] is not None:
 					for j in xrange(len(residue)):
 						if residue[j]['atom_name'] ==  acceptor[1]:
 							atom['acceptors'].append(residue[j]['atom_i'])
 				else:
-					print atom['atom_i']
 					atom['acceptors'].append(0)
 
 imphis = []
