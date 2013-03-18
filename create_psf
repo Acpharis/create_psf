@@ -189,7 +189,7 @@ for i in xrange(len(pdb_residues)):
 			if residue_num == 1 and ord(residue_alt) - ord(p_residue_alt) == -1:
 				prev_residue = pdb_residues[i-1]
 	next_residue = None
-	#use numbering to determine prev_residue
+	#use numbering to determine next_residue
 	if i < len(pdb_residues)-1:
 		residue_num   = residue[0]['residue_num']
 		n_residue_num = pdb_residues[i+1][0]['residue_num']
