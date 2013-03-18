@@ -162,7 +162,7 @@ for line in pdb:
 		mass = atom_types[residues[residue_name]['atoms'][atom_name]['type']]['mass']
 		atoms.append({'atom_i' : atom_i, 'chain_id': chain_id, 'residue_num': residue_num, 'residue_alt': residue_alt,
 		              'residue_id': residue_id, 'residue_name': residue_name, 'atom_name': atom_name, 'atom_type_id': atom_type_id,
-		              'charge': charge, 'mass': mass, 'disulfide': False, 'x': x, 'y': y, 'z': z, 'imphis': [], 'donors': [], 'acceptors': []})
+		              'charge': charge, 'mass': mass, 'disulfide': False, 'x': x, 'y': y, 'z': z})
 
 pdb.close()
 
@@ -203,6 +203,9 @@ for residue in pdb_residue_list:
 	pdb_residues.append( filter(lambda x: x['chain_id'] == residue[0] and x['residue_id'] == residue_id, atoms ) )
 
 bonds = []
+imphis = []
+donors = []
+acceptors = []
 for i in xrange(len(pdb_residues)):
 	residue = pdb_residues[i]
 	prev_residue = None
@@ -273,6 +276,7 @@ for i in xrange(len(pdb_residues)):
 
 	for atom in residue:
 		name = atom['atom_name']
+		atom_i = atom['atom_i']
 		for imphi in imphi_list:
 			if name == imphi[0]: #we have an imphi
 				atom1 = None
@@ -325,50 +329,34 @@ for i in xrange(len(pdb_residues)):
 							atom3 = residue[j]['atom_i']
 				if atom3 is None:
 					continue
-				atom['imphis'].append( (atom1, atom2, atom3) )
+				imphis.append( (atom_i, atom1, atom2, atom3) )
 
 	#HB donors
 	donor_list = residues[residue_name]['donors']
 
 	for atom in residue:
 		name = atom['atom_name']
+		atom_i = atom['atom_i']
 		for donor in donor_list:
 			if name == donor[0]: #we have a hydrogen bond donor
 				for j in xrange(len(residue)):
 					if residue[j]['atom_name'] ==  donor[1]:
-						atom['donors'].append(residue[j]['atom_i'])
+						donors.append( (atom_i, residue[j]['atom_i']) )
 
 	#HB acceptors
 	acceptor_list = residues[residue_name]['acceptors']
 
 	for atom in residue:
 		name = atom['atom_name']
+		atom_i = atom['atom_i']
 		for acceptor in acceptor_list:
 			if name == acceptor[0]: #we have a hydrogen bond donor
 				if acceptor[1] is not None:
 					for j in xrange(len(residue)):
 						if residue[j]['atom_name'] ==  acceptor[1]:
-							atom['acceptors'].append(residue[j]['atom_i'])
+							acceptors.append( (atom_i, residue[j]['atom_i']) )
 				else:
-					atom['acceptors'].append(0)
-
-imphis = []
-for atom in atoms:
-	atom_i = atom['atom_i']
-	for imphi in atom['imphis']:
-		imphis.append( (atom_i, imphi[0], imphi[1], imphi[2]) )
-
-donors = []
-for atom in atoms:
-	atom_i = atom['atom_i']
-	for donor in atom['donors']:
-		donors.append( (atom_i, donor) )
-
-acceptors = []
-for atom in atoms:
-	atom_i = atom['atom_i']
-	for acceptor in atom['acceptors']:
-		acceptors.append( (atom_i, acceptor) )
+					acceptors.append( (atom_i, 0) )
 
 #angles
 thetas = set()
