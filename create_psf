@@ -149,6 +149,10 @@ for line in pdb:
 	if line[:6] == 'ATOM  ':
 		atom_i =  int(line[6:11])
 		chain_id =  line[21]
+		if chain_id == ' ' and len(line) > 73:
+			chain_id = line[72]
+			if chain_id == ' ':
+				chain_id = line[73]
 		residue_num =  int(line[22:26])
 		residue_alt =  line[26]
 		residue_id = str(residue_num) + residue_alt
