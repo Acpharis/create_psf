@@ -195,11 +195,10 @@ for atom in atoms:
 #bonds and imphis
 #first split into residues, since each residue type has
 #a list of bonds and imphis
-pdb_residue_list = set()
+pdb_residue_list = []
 for atom in atoms:
-	pdb_residue_list.add( (atom['chain_id'], atom['residue_num'], atom['residue_alt']) )
-
-pdb_residue_list = sorted(pdb_residue_list, key=lambda x: (ord(x[0])*100000*100) + x[1]*100 + ord(x[2]) )
+	if (atom['chain_id'], atom['residue_num'], atom['residue_alt'])  not in pdb_residue_list:
+		pdb_residue_list.append( (atom['chain_id'], atom['residue_num'], atom['residue_alt']) )
 
 pdb_residues = []
 for residue in pdb_residue_list:
