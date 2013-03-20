@@ -219,7 +219,7 @@ for i in xrange(len(pdb_residues)):
 		p_residue_num = pdb_residues[i-1][0]['residue_num']
 		if residue_num - p_residue_num == 1: # if 1 apart, assume next to each other
 			prev_residue = pdb_residues[i-1]
-		if residue_num == p_residue_num: #same number means alt differs
+		elif residue_num == p_residue_num: #same number means alt differs
 			residue_alt   = residue[0]['residue_alt']
 			p_residue_alt = pdb_residues[i-1][0]['residue_alt']
 			if residue_alt == 'A' and p_residue_alt == ' ':
@@ -230,6 +230,18 @@ for i in xrange(len(pdb_residues)):
 				prev_residue = pdb_residues[i-1]
 			if residue_num == 1 and ord(residue_alt) - ord(p_residue_alt) == -1:
 				prev_residue = pdb_residues[i-1]
+		else: #check distance between nitrogen and previous residue C
+			for j in xrange(len(residue)):
+				if residue[j]['atom_name'] == 'N':
+					for k in xrange(len(pdb_residues[i-1])):
+						if pdb_residues[i-1][k]['atom_name'] == 'C':
+							dx = residue[j]['x'] - pdb_residues[i-1][k]['x']
+							dy = residue[j]['y'] - pdb_residues[i-1][k]['y']
+							dz = residue[j]['z'] - pdb_residues[i-1][k]['z']
+							dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+							print dist
+							if dist < 1.4:
+								prev_residue = pdb_residues[i-1]
 	next_residue = None
 	#use numbering to determine next_residue
 	if i < len(pdb_residues)-1:
@@ -237,7 +249,7 @@ for i in xrange(len(pdb_residues)):
 		n_residue_num = pdb_residues[i+1][0]['residue_num']
 		if n_residue_num - residue_num == 1: # if 1 apart, assume next to each other
 			next_residue = pdb_residues[i+1]
-		if residue_num == n_residue_num: #same number means alt differs
+		elif residue_num == n_residue_num: #same number means alt differs
 			residue_alt   = residue[0]['residue_alt']
 			n_residue_alt = pdb_residues[i+1][0]['residue_alt']
 			if residue_alt == ' ' and n_residue_alt == 'A':
@@ -248,6 +260,18 @@ for i in xrange(len(pdb_residues)):
 				next_residue = pdb_residues[i+1]
 			if residue_num == 1 and ord(n_residue_alt) - ord(residue_alt) == -1:
 				next_residue = pdb_residues[i+1]
+		else: #check distance between nitrogen and previous residue C
+			for j in xrange(len(residue)):
+				if residue[j]['atom_name'] == 'C':
+					for k in xrange(len(pdb_residues[i+1])):
+						if pdb_residues[i+1][k]['atom_name'] == 'N':
+							dx = residue[j]['x'] - pdb_residues[i+1][k]['x']
+							dy = residue[j]['y'] - pdb_residues[i+1][k]['y']
+							dz = residue[j]['z'] - pdb_residues[i+1][k]['z']
+							dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+							print dist
+							if dist < 1.4:
+								next_residue = pdb_residues[i+1]
 	
 	residue_name = residue[0]['residue_name']
 	bond_list = residues[residue_name]['bonds']
