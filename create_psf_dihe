@@ -254,7 +254,6 @@ for i in xrange(len(pdb_residues)):
 							dy = residue[j]['y'] - pdb_residues[i-1][k]['y']
 							dz = residue[j]['z'] - pdb_residues[i-1][k]['z']
 							dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-							print dist
 							if dist < 1.4:
 								prev_residue = pdb_residues[i-1]
 	next_residue = None
@@ -284,7 +283,6 @@ for i in xrange(len(pdb_residues)):
 							dy = residue[j]['y'] - pdb_residues[i+1][k]['y']
 							dz = residue[j]['z'] - pdb_residues[i+1][k]['z']
 							dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-							print dist
 							if dist < 1.4:
 								next_residue = pdb_residues[i+1]
 	
