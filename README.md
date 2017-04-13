@@ -22,6 +22,3 @@ David Hall <david@acpharis.com>
 
 ## Funding
 This work was partially funded by NIGMS grants R41GM097907 and R41GM101907
-
-## NOTES
-Contributions that break CentOS 5 support will not be accepted

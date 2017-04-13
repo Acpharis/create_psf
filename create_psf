@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-#Copyright 2012 Acpharis Inc, All Rights Reserved
+# Copyright 2016 Acpharis Inc, All Rights Reserved
 #
-#Redistribution and use in source and binary forms, with or without modification,
+# Redistribution and use in source and binary forms, with or without modification,
 # are permitted provided that the following conditions are met:
 #
 # 1. Redistributions of source code must retain the above copyright notice, this
@@ -9,499 +9,509 @@
 # 2. Redistributions in binary form must reproduce the above copyright notice, this
 #    list of conditions and the following disclaimer in the documentation and/or
 #    other materials provided with the distribution.
-#THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
-#EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-#WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-#IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
-#INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
-#NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-#PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-#WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-#ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-#POSSIBILITY OF SUCH DAMAGE.
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+# IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+# INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+# NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
 
+from __future__ import print_function
 import sys
-import re
 import math
+from collections import defaultdict
+from collections import OrderedDict
+
+
+def read_rtf(rtf_file):
+    atom_types = dict()
+    residues = dict()
+    curr_res_name = None
+    special_types = set()
+
+    with open(rtf_file, 'r') as rtf:
+        for line in rtf:
+            if line.startswith('MASS'):
+                # process mass line
+                fields = line.split()
+                atype = fields[2]
+                atom_types[atype] = {
+                    'num': int(fields[1]), 'mass': float(fields[3])}
+
+            elif line.startswith('DECL'):
+                # process decl line
+                # DECL -CA
+                fields = line.split()
+                special_types.add(fields[1])
+
+            elif line.startswith(('RESI', 'PRES')):
+                # set current residue
+                fields = line.split()
+                curr_res_name = fields[1]
+                residues[curr_res_name] = {
+                    'atoms': {}, 'bonds': [], 'imphis': [], 'donors': [], 'acceptors': []}
+
+            elif line.startswith('ATOM'):
+                # add atom within current residue
+                if curr_res_name is None:
+                    print("error: atom before residue name", file=sys.stderr)
+                    sys.exit(1)
+
+                fields = line.split()
+                atom_name = fields[1]
+                atom_type = fields[2]
+                charge = float(fields[3])
+                residues[curr_res_name]['atoms'][atom_name] = {
+                    'type': atom_type, 'charge': charge, 'bonds': []}
+
+            elif line.startswith('BOND'):
+                # add bond within current residue
+                if curr_res_name is None:
+                    print("error: bond before residue name", file=sys.stderr)
+                    sys.exit(1)
+                comment = line.find('!')
+                if comment != -1:
+                    line = line[:comment]
+                fields = line.split()
+                fields.reverse()
+                fields.pop()
+                while len(fields) > 0:
+                    atom1 = fields.pop()
+                    atom2 = fields.pop()
+                    residues[curr_res_name]['bonds'].append([atom1, atom2])
+                    if atom1 in residues[curr_res_name]['atoms']:
+                        residues[curr_res_name]['atoms'][
+                            atom1]['bonds'].append(atom2)
+
+            elif line.startswith('IMPH'):
+                # add improper within current residue
+                if curr_res_name is None:
+                    print(
+                        "error: improper before residue name", file=sys.stderr)
+                    sys.exit(1)
+                comment = line.find('!')
+                if comment != -1:
+                    line = line[:comment]
+                fields = line.split()
+                while len(fields) > 1:
+                    atom4 = fields.pop()
+                    atom3 = fields.pop()
+                    atom2 = fields.pop()
+                    atom1 = fields.pop()
+                    residues[curr_res_name]['imphis'].append(
+                        [atom1, atom2, atom3, atom4])
+
+            elif line.startswith('DONO'):
+                # add hb donors within current residue
+                if curr_res_name is None:
+                    print("error: donors before residue name", file=sys.stderr)
+                    sys.exit(1)
+                comment = line.find('!')
+                if comment != -1:
+                    line = line[:comment]
+                fields = line.split()
+                while len(fields) > 1:
+                    atom1 = fields.pop()
+                    atom2 = fields.pop()
+                    residues[curr_res_name]['donors'].append([atom1, atom2])
+
+            elif line.startswith('ACCE'):
+                # add hb acceptors within current residue
+                if curr_res_name is None:
+                    print(
+                        "error: acceptors before residue name", file=sys.stderr)
+                    sys.exit(1)
+                comment = line.find('!')
+                if comment != -1:
+                    line = line[:comment]
+                fields = line.split()
+                while len(fields) > 1:
+                    atom2 = fields.pop()
+                    if len(fields) == 1:
+                        atom1 = atom2
+                        atom2 = None
+                    else:
+                        atom1 = fields.pop()
+                    residues[curr_res_name]['acceptors'].append([atom1, atom2])
+
+    return atom_types, residues, special_types
+
+
+def read_pdb(pdb_file, atom_types, residues):
+    atoms = []
+    pdb_residues = OrderedDict()
+    with open(pdb_file, 'r') as pdb:
+        for line in pdb:
+            if line.startswith('ATOM  '):
+                atom_i = int(line[6:11])
+                chain_id = line[21]
+                if chain_id == ' ' and len(line) > 73:
+                    chain_id = line[72]
+                    if chain_id == ' ':
+                        chain_id = line[73]
+                residue_num = int(line[22:26])
+                residue_alt = line[26]
+                residue_id = str(residue_num) + residue_alt
+                residue_name = line[17:21].strip()
+                atom_name = line[12:16].strip()
+                x = float(line[30:38])
+                y = float(line[38:46])
+                z = float(line[46:54])
+                atom_type_id = atom_types[
+                    residues[residue_name]['atoms'][atom_name]['type']]['num']
+                charge = residues[residue_name]['atoms'][atom_name]['charge']
+                mass = atom_types[
+                    residues[residue_name]['atoms'][atom_name]['type']]['mass']
+                atom = {
+                    'atom_i': atom_i, 'chain_id': chain_id, 'residue_num': residue_num, 'residue_alt': residue_alt,
+                              'residue_id': residue_id, 'residue_name': residue_name, 'atom_name': atom_name, 'atom_type_id': atom_type_id,
+                              'charge': charge, 'mass': mass, 'disulfide': False, 'x': x, 'y': y, 'z': z}
+
+                atoms.append(atom)
+
+                dict_key = (residue_id, chain_id)
+                if dict_key not in pdb_residues:
+                    pdb_residues[dict_key] = {}
+                pdb_residues[dict_key][atom_name] = atom
+
+    return atoms, list(pdb_residues.values())
+
+
+def detect_disulfides(atoms):
+    cys_SGs = [atom for atom in atoms if atom['atom_name']
+               == 'SG' and atom['residue_name'] == 'CYS']
+    disulfides = set()
+    disulfide_SGs = set()
+    min_disu_dist = 1.28925530695  # mean disulfide distance +- 2 stdev from whole pdb
+    max_disu_dist = 2.82114477374
+    for i, SG1 in enumerate(cys_SGs):
+        for SG2 in cys_SGs[i + 1:]:
+            dx = SG1['x'] - SG2['x']
+            dy = SG1['y'] - SG2['y']
+            dz = SG1['z'] - SG2['z']
+            dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if dist < max_disu_dist and dist > min_disu_dist:
+                disulfides.add(sorted_bond(SG1['atom_i'], SG2['atom_i']))
+                disulfide_SGs.add(SG1['atom_i'])
+                disulfide_SGs.add(SG2['atom_i'])
+
+    return disulfides, disulfide_SGs
+
+
+def sorted_bond(atom_1, atom_2):
+    return (atom_1, atom_2) if atom_2 > atom_1 else (atom_2, atom_1)
+
+
+def sorted_phi(phi):
+    return phi if phi[3] > phi[0] else (phi[3], phi[2], phi[1], phi[0])
+
+
+def construct_donors(pdb_residues, residues):
+    donors = []
+    for residue in pdb_residues:
+        residue_name = residue.values()[0]['residue_name']
+        donor_list = residues[residue_name]['donors']
+        for donor in donor_list:
+            atom = residue[donor[0]]
+            atom2 = residue[donor[1]]
+            donors.append((atom['atom_i'], atom2['atom_i']))
+    return donors
+
+
+def construct_acceptors(pdb_residues, residues):
+    acceptors = []
+    for residue in pdb_residues:
+        residue_name = residue.values()[0]['residue_name']
+        acceptor_list = residues[residue_name]['acceptors']
+        for acceptor in acceptor_list:
+            atom = residue[acceptor[0]]
+            atom_i = atom['atom_i']
+            if acceptor[1] is not None:
+                atom2 = residue[acceptor[1]]
+                acceptors.append((atom_i, atom2['atom_i']))
+            else:
+                acceptors.append((atom_i, 0))
+    return acceptors
+
+
+def construct_bonds_imphis(pdb_residues, residues, special_types, disulfides):
+    bonds = []
+    bond_dict = defaultdict(set)
+    imphis = []
+    n_residues = len(pdb_residues)
+
+    bonds.extend(disulfides)
+    for bond in disulfides:
+        bond_dict[bond[0]].add(bond[1])
+        bond_dict[bond[1]].add(bond[0])
+
+    for i, residue in enumerate(pdb_residues):
+        prev_residue = None
+        # use numbering to determine prev_residue
+        if i > 0:
+            residue_num = residue.values()[0]['residue_num']
+            p_residue_num = pdb_residues[i - 1].values()[0]['residue_num']
+            if residue_num - p_residue_num == 1:  # if 1 apart, assume next to each other
+                prev_residue = pdb_residues[i - 1]
+            elif residue_num == p_residue_num:  # same number means alt differs
+                residue_alt = residue.values()[0]['residue_alt']
+                p_residue_alt = pdb_residues[i - 1].values()[0]['residue_alt']
+                if residue_alt == 'A' and p_residue_alt == ' ':
+                    prev_residue = pdb_residues[i - 1]
+                if ord(residue_alt) - ord(p_residue_alt) == 1:
+                    prev_residue = pdb_residues[i - 1]
+                if residue_num == 1 and residue_alt == ' ' and p_residue_alt == 'A':  # frequently 1B, 1A, 1 is the order
+                    prev_residue = pdb_residues[i - 1]
+                if residue_num == 1 and ord(residue_alt) - ord(p_residue_alt) == -1:
+                    prev_residue = pdb_residues[i - 1]
+            else:  # check distance between nitrogen and previous residue C
+                atom1 = residue['N']
+                atom2 = pdb_residues[i - 1]['C']
+                dx = atom1['x'] - atom2['x']
+                dy = atom1['y'] - atom2['y']
+                dz = atom1['z'] - atom2['z']
+                dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                if dist < 1.4:
+                    prev_residue = pdb_residues[i - 1]
+        next_residue = None
+        # use numbering to determine next_residue
+        if i < n_residues - 1:
+            residue_num = residue.values()[0]['residue_num']
+            n_residue_num = pdb_residues[i + 1].values()[0]['residue_num']
+            if n_residue_num - residue_num == 1:  # if 1 apart, assume next to each other
+                next_residue = pdb_residues[i + 1]
+            elif residue_num == n_residue_num:  # same number means alt differs
+                residue_alt = residue.values()[0]['residue_alt']
+                n_residue_alt = pdb_residues[i + 1].values()[0]['residue_alt']
+                if residue_alt == ' ' and n_residue_alt == 'A':
+                    next_residue = pdb_residues[i + 1]
+                if ord(n_residue_alt) - ord(residue_alt) == 1:
+                    next_residue = pdb_residues[i + 1]
+                if residue_num == 1 and residue_alt == 'A' and n_residue_alt == ' ':  # frequently 1B, 1A, 1 is the order
+                    next_residue = pdb_residues[i + 1]
+                if residue_num == 1 and ord(n_residue_alt) - ord(residue_alt) == -1:
+                    next_residue = pdb_residues[i + 1]
+            else:  # check distance between nitrogen and previous residue C
+                atom1 = residue['C']
+                atom2 = pdb_residues[i + 1]['N']
+                dx = atom1['x'] - atom2['x']
+                dy = atom1['y'] - atom2['y']
+                dz = atom1['z'] - atom2['z']
+                dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                if dist < 1.4:
+                    next_residue = pdb_residues[i + 1]
+
+        residue_name = residue.values()[0]['residue_name']
+        bond_list = residues[residue_name]['bonds']
+
+        for bond in bond_list:
+            atom = residue[bond[0]]
+            atom_i = atom['atom_i']
+            if bond[1] in special_types:
+                if bond[1][0] == '-' and prev_residue is not None:  # look to prev residue
+                    atom_p = prev_residue[bond[1][1:]]
+                    bonds.append(sorted_bond(atom_i, atom_p['atom_i']))
+                    bond_dict[atom_i].add(atom_p['atom_i'])
+                    bond_dict[atom_p['atom_i']].add(atom_i)
+                if bond[1][0] == '+' and next_residue is not None:  # look to next residue
+                    atom_n = next_residue[bond[1][1:]]
+                    bonds.append(sorted_bond(atom_i, atom_n['atom_i']))
+                    bond_dict[atom_i].add(atom_n['atom_i'])
+                    bond_dict[atom_n['atom_i']].add(atom_i)
+            else:
+                atom_c = residue[bond[1]]
+                bonds.append(sorted_bond(atom_i, atom_c['atom_i']))
+                bond_dict[atom_i].add(atom_c['atom_i'])
+                bond_dict[atom_c['atom_i']].add(atom_i)
+
+        # imphis
+        imphi_list = residues[residue_name]['imphis']
+
+        for imphi in imphi_list:
+            atom = residue[imphi[0]]
+            atom_i = atom['atom_i']
+            atom1 = None
+            atom2 = None
+            atom3 = None
+            if imphi[1] in special_types:
+                if imphi[1][0] == '-' and prev_residue is not None:  # look to prev residue
+                    atom_p = prev_residue[imphi[1][1:]]
+                    atom1 = atom_p['atom_i']
+                if imphi[1][0] == '+' and next_residue is not None:  # look to next residue
+                    atom_n = next_residue[imphi[1][1:]]
+                    atom1 = atom_n['atom_i']
+            else:
+                atom_c = residue[imphi[1]]
+                atom1 = atom_c['atom_i']
+            if atom1 is None:
+                continue
+            # atom2
+            if imphi[2] in special_types:
+                if imphi[2][0] == '-' and prev_residue is not None:  # look to prev residue
+                    atom_p = prev_residue[imphi[2][1:]]
+                    atom2 = atom_p['atom_i']
+                if imphi[2][0] == '+' and next_residue is not None:  # look to next residue
+                    atom_n = next_residue[imphi[2][1:]]
+                    atom2 = atom_n['atom_i']
+            else:
+                atom_c = residue[imphi[2]]
+                atom2 = atom_c['atom_i']
+            if atom2 is None:
+                continue
+            # atom3
+            if imphi[3] in special_types:
+                if imphi[3][0] == '-' and prev_residue is not None:  # look to prev residue
+                    atom_p = prev_residue[imphi[3][1:]]
+                    atom3 = atom_p['atom_i']
+                if imphi[3][0] == '+' and next_residue is not None:  # look to next residue
+                    atom_n = next_residue[imphi[3][1:]]
+                    atom3 = atom_n['atom_i']
+            else:
+                atom_c = residue[imphi[3]]
+                atom3 = atom_c['atom_i']
+            if atom3 is None:
+                continue
+            imphis.append((atom_i, atom1, atom2, atom3))
+
+    bonds.sort()
+
+    return bonds, bond_dict, imphis
+
+
+def construct_angles_and_dihedrals(bond_dict):
+    thetas = set()
+    phis = set()
+    for atom2, bonded in bond_dict.items():
+        bonded = sorted(bonded)
+        for i, atom1 in enumerate(bonded):
+            for atom3 in bonded[i + 1:]:
+                thetas.add((atom1, atom2, atom3))
+
+                atom1_bonds = bond_dict[atom1]
+                for atom0 in atom1_bonds:
+                    if atom0 != atom2:
+                        phis.add(sorted_phi((atom0, atom1, atom2, atom3)))
+
+                atom3_bonds = bond_dict[atom3]
+                for atom4 in atom3_bonds:
+                    if atom4 != atom2:
+                        phis.add(sorted_phi((atom1, atom2, atom3, atom4)))
+
+    return sorted(thetas), phis
+
+
+def write_psf(psf_file, atoms, bonds, thetas, phis, imphis, donors, acceptors):
+    with open(psf_file, 'w') as psf_out:
+        psf_out = open(psf_file, 'w')
+
+        psf_out.write("PSF\n")
+        psf_out.write("\n")
+        psf_out.write("       1 !NTITLE\n")
+        psf_out.write(" REMARKS psf file from Acpharis create_psf\n")
+        psf_out.write("\n")
+        psf_out.write("%8g !NATOM\n" % len(atoms))
+        for atom in atoms:
+            psf_out.write(
+                "%8g %-4s %-5s%-4s %-5s  %2g  % .6f       %7.4f           0\n" % (atom['atom_i'], atom['chain_id'], atom['residue_id'],
+                                                                                  atom['residue_name'], atom['atom_name'], atom['atom_type_id'], atom['charge'], atom['mass']))
+
+        psf_out.write("\n")
+        psf_out.write("%8g !NBOND: bonds" % len(bonds))
+        bond_i = 0
+        for bond in bonds:
+            if bond_i % 4 == 0:
+                psf_out.write("\n")
+            psf_out.write("%8g%8g" % bond)
+            bond_i += 1
+        psf_out.write("\n")  # finish off end of bonds with new line
+
+        psf_out.write("\n")
+        psf_out.write("%8g !NTHETA: angles" % len(thetas))
+        theta_i = 0
+        for theta in thetas:
+            if theta_i % 3 == 0:
+                psf_out.write("\n")
+            psf_out.write("%8g%8g%8g" % theta)
+            theta_i += 1
+        psf_out.write("\n")  # finish off end of thetas with new line
+
+        psf_out.write("\n")
+        psf_out.write("%8g !NPHI: dihedralas" % len(phis))
+        phi_i = 0
+        for phi in phis:
+            if phi_i % 2 == 0:
+                psf_out.write("\n")
+            psf_out.write("%8g%8g%8g%8g" % phi)
+            phi_i += 1
+        psf_out.write("\n")  # finish off end of phis with new line
+
+        psf_out.write("\n")
+        psf_out.write("%8g !NIMPHI: impropers" % len(imphis))
+        imphi_i = 0
+        for imphi in imphis:
+            if imphi_i % 2 == 0:
+                psf_out.write("\n")
+            psf_out.write("%8g%8g%8g%8g" % imphi)
+            imphi_i += 1
+        psf_out.write("\n")  # finish off end of phis with new line
+
+        psf_out.write("\n")
+        psf_out.write("%8g !NDON: donors" % len(donors))
+        donor_i = 0
+        for donor in donors:
+            if donor_i % 4 == 0:
+                psf_out.write("\n")
+            psf_out.write("%8g%8g" % donor)
+            donor_i += 1
+        psf_out.write("\n")  # finish off end of donors with new line
+
+        psf_out.write("\n")
+        psf_out.write("%8g !NACC: acceptors" % len(acceptors))
+        acceptor_i = 0
+        for acceptor in acceptors:
+            if acceptor_i % 4 == 0:
+                psf_out.write("\n")
+            psf_out.write("%8g%8g" % acceptor)
+            acceptor_i += 1
+        psf_out.write("\n")  # finish off end of acceptors with new line
+
+
+def make_psf(pdb_file, rtf_file, psf_file):
+    # read rtf
+    atom_types, residues, special_types = read_rtf(rtf_file)
+
+    # read pdb
+    atoms, pdb_residues = read_pdb(pdb_file, atom_types, residues)
+
+    # disulfides
+    disulfides, disulfide_SGs = detect_disulfides(atoms)
+
+    for atom in atoms:
+        if atom['atom_i'] in disulfide_SGs:
+            atom['atom_type_id'] = atom_types['S']['num']
+            atom['mass'] = atom_types['S']['mass']
+
+    # bonds and imphis
+    bonds, bond_dict, imphis = construct_bonds_imphis(
+        pdb_residues, residues, special_types, disulfides)
+    donors = construct_donors(pdb_residues, residues)
+    acceptors = construct_acceptors(pdb_residues, residues)
+
+    # angles
+    thetas, phis = construct_angles_and_dihedrals(bond_dict)
+
+    write_psf(psf_file, atoms, bonds, thetas, phis, imphis, donors, acceptors)
 
 if len(sys.argv) < 4:
-	sys.stderr.write("usage: "+sys.argv[0]+" pdb rtf out_psf\n")
-	sys.exit(1)
+    sys.stderr.write("usage: " + sys.argv[0] + " pdb rtf out_psf\n")
+    sys.exit(1)
 
 pdb_file = sys.argv[1]
 rtf_file = sys.argv[2]
 psf_file = sys.argv[3]
 
-#read rtf
-atom_types = dict()
-residues = dict()
-curr_res_name = None
-special_types = set()
-
-rtf = open(rtf_file, 'r')
-
-for line in rtf:
-	if line[:4] == 'MASS':
-		#process mass line
-		fields = line.split()
-		type = fields[2]
-		atom_types[type] = {'num': int(fields[1]), 'mass': float(fields[3]) }
-
-	if line[:4] == 'DECL':
-		#process decl line
-		#DECL -CA
-		fields = line.split()
-		special_types.add(fields[1])
-
-	if line[:4] == 'RESI' or line[:4] == 'PRES':
-		#set current residue
-		fields = line.split()
-		curr_res_name= fields[1]
-		residues[curr_res_name] = {'atoms':{}, 'bonds': [], 'imphis': [], 'donors': [], 'acceptors': []}
-
-	if line[:4] == 'ATOM':
-		#add atom within current residue
-		if curr_res_name is None:
-			print "error: atom before residue name"
-			sys.exit(1)
-		
-		fields    = line.split()
-		atom_name = fields[1]
-		atom_type = fields[2]
-		charge    = float(fields[3])
-		residues[curr_res_name]['atoms'][atom_name] = {'type': atom_type, 'charge': charge}
-		
-	if line[:4] == 'BOND':
-		#add bond within current residue
-		if curr_res_name is None:
-			print "error: bond before residue name"
-			sys.exit(1)
-		comment = line.find('!')
-		if comment != -1:
-			line = line[:comment]
-		fields    = line.split()
-		fields.reverse()
-		fields.pop()
-		while len(fields) > 0:
-			atom1 = fields.pop()
-			atom2 = fields.pop()
-			residues[curr_res_name]['bonds'].append([atom1, atom2])
-
-
-	if line[:4] == 'IMPH':
-		#add improper within current residue
-		if curr_res_name is None:
-			print "error: improper before residue name"
-			sys.exit(1)
-		comment = line.find('!')
-		if comment != -1:
-			line = line[:comment]
-		fields    = line.split()
-		while len(fields) > 1:
-			atom4 = fields.pop()
-			atom3 = fields.pop()
-			atom2 = fields.pop()
-			atom1 = fields.pop()
-			residues[curr_res_name]['imphis'].append([atom1, atom2, atom3, atom4])
-
-
-	if line[:4] == 'DONO':
-		#add hb donors within current residue
-		if curr_res_name is None:
-			print "error: donors before residue name"
-			sys.exit(1)
-		comment = line.find('!')
-		if comment != -1:
-			line = line[:comment]
-		fields    = line.split()
-		while len(fields) > 1:
-			atom1 = fields.pop()
-			atom2 = fields.pop()
-			residues[curr_res_name]['donors'].append([atom1, atom2])
-
-
-	if line[:4] == 'ACCE':
-		#add hb acceptors within current residue
-		if curr_res_name is None:
-			print "error: acceptors before residue name"
-			sys.exit(1)
-		comment = line.find('!')
-		if comment != -1:
-			line = line[:comment]
-		fields    = line.split()
-		while len(fields) > 1:
-			atom2 = fields.pop()
-			if len(fields) ==1:
-				atom1 = atom2
-				atom2 = None
-			else:
-				atom1 = fields.pop()
-			residues[curr_res_name]['acceptors'].append([atom1, atom2])
-
-rtf.close()
-
-
-#read pdb
-pdb = open(pdb_file, 'r')
-
-atoms = []
-for line in pdb:
-	if line[:6] == 'ATOM  ':
-		atom_i =  int(line[6:11])
-		chain_id =  line[21]
-		if chain_id == ' ' and len(line) > 73:
-			chain_id = line[72]
-			if chain_id == ' ':
-				chain_id = line[73]
-		residue_num =  int(line[22:26])
-		residue_alt =  line[26]
-		residue_id = str(residue_num) + residue_alt
-		residue_name =  line[17:21].strip()
-		atom_name = line[12:16].strip()
-		x = float(line[30:38].strip())
-		y = float(line[38:46].strip())
-		z = float(line[46:54].strip())
-		atom_type_id = atom_types[residues[residue_name]['atoms'][atom_name]['type']]['num']
-		charge = residues[residue_name]['atoms'][atom_name]['charge']
-		mass = atom_types[residues[residue_name]['atoms'][atom_name]['type']]['mass']
-		atoms.append({'atom_i' : atom_i, 'chain_id': chain_id, 'residue_num': residue_num, 'residue_alt': residue_alt,
-		              'residue_id': residue_id, 'residue_name': residue_name, 'atom_name': atom_name, 'atom_type_id': atom_type_id,
-		              'charge': charge, 'mass': mass, 'disulfide': False, 'x': x, 'y': y, 'z': z})
-
-pdb.close()
-
-#disulfides
-cys_SGs = filter(lambda x: x['atom_name'] == 'SG' and x['residue_name'] == 'CYS', atoms)
-disulfides = set()
-disulfide_SGs = set()
-min_disu_dist = 1.28925530695 #mean disulfide distance +- 2 stdev from whole pdb
-max_disu_dist = 2.82114477374
-for i in xrange(len(cys_SGs)):
-	for j in xrange(i+1,len(cys_SGs)):
-		dx = cys_SGs[i]['x'] - cys_SGs[j]['x']
-		dy = cys_SGs[i]['y'] - cys_SGs[j]['y']
-		dz = cys_SGs[i]['z'] - cys_SGs[j]['z']
-		dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-		if dist < max_disu_dist and dist > min_disu_dist:
-			disulfides.add((cys_SGs[i]['atom_i'], cys_SGs[j]['atom_i']))
-			disulfide_SGs.add(cys_SGs[i]['atom_i'])
-			disulfide_SGs.add(cys_SGs[j]['atom_i'])
-
-for atom in atoms:
-	if atom['atom_i'] in disulfide_SGs:
-		atom['atom_type_id'] = atom_types['ST']['num']
-		atom['mass'] = atom_types['ST']['mass']
-
-#bonds and imphis
-#first split into residues, since each residue type has
-#a list of bonds and imphis
-pdb_residue_list = []
-for atom in atoms:
-	if (atom['chain_id'], atom['residue_num'], atom['residue_alt'])  not in pdb_residue_list:
-		pdb_residue_list.append( (atom['chain_id'], atom['residue_num'], atom['residue_alt']) )
-
-pdb_residues = []
-for residue in pdb_residue_list:
-	residue_id = str(residue[1]) + residue[2]
-	pdb_residues.append( filter(lambda x: x['chain_id'] == residue[0] and x['residue_id'] == residue_id, atoms ) )
-
-bonds = []
-imphis = []
-donors = []
-acceptors = []
-for i in xrange(len(pdb_residues)):
-	residue = pdb_residues[i]
-	prev_residue = None
-	#use numbering to determine prev_residue
-	if i > 0:
-		residue_num   = residue[0]['residue_num']
-		p_residue_num = pdb_residues[i-1][0]['residue_num']
-		if residue_num - p_residue_num == 1: # if 1 apart, assume next to each other
-			prev_residue = pdb_residues[i-1]
-		elif residue_num == p_residue_num: #same number means alt differs
-			residue_alt   = residue[0]['residue_alt']
-			p_residue_alt = pdb_residues[i-1][0]['residue_alt']
-			if residue_alt == 'A' and p_residue_alt == ' ':
-				prev_residue = pdb_residues[i-1]
-			if ord(residue_alt) - ord(p_residue_alt) == 1:
-				prev_residue = pdb_residues[i-1]
-			if residue_num == 1 and residue_alt == ' ' and p_residue_alt == 'A': #frequently 1B, 1A, 1 is the order
-				prev_residue = pdb_residues[i-1]
-			if residue_num == 1 and ord(residue_alt) - ord(p_residue_alt) == -1:
-				prev_residue = pdb_residues[i-1]
-		else: #check distance between nitrogen and previous residue C
-			for j in xrange(len(residue)):
-				if residue[j]['atom_name'] == 'N':
-					for k in xrange(len(pdb_residues[i-1])):
-						if pdb_residues[i-1][k]['atom_name'] == 'C':
-							dx = residue[j]['x'] - pdb_residues[i-1][k]['x']
-							dy = residue[j]['y'] - pdb_residues[i-1][k]['y']
-							dz = residue[j]['z'] - pdb_residues[i-1][k]['z']
-							dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-							if dist < 1.4:
-								prev_residue = pdb_residues[i-1]
-	next_residue = None
-	#use numbering to determine next_residue
-	if i < len(pdb_residues)-1:
-		residue_num   = residue[0]['residue_num']
-		n_residue_num = pdb_residues[i+1][0]['residue_num']
-		if n_residue_num - residue_num == 1: # if 1 apart, assume next to each other
-			next_residue = pdb_residues[i+1]
-		elif residue_num == n_residue_num: #same number means alt differs
-			residue_alt   = residue[0]['residue_alt']
-			n_residue_alt = pdb_residues[i+1][0]['residue_alt']
-			if residue_alt == ' ' and n_residue_alt == 'A':
-				next_residue = pdb_residues[i+1]
-			if ord(n_residue_alt) - ord(residue_alt) == 1:
-				next_residue = pdb_residues[i+1]
-			if residue_num == 1 and residue_alt == 'A' and n_residue_alt == ' ': #frequently 1B, 1A, 1 is the order
-				next_residue = pdb_residues[i+1]
-			if residue_num == 1 and ord(n_residue_alt) - ord(residue_alt) == -1:
-				next_residue = pdb_residues[i+1]
-		else: #check distance between nitrogen and previous residue C
-			for j in xrange(len(residue)):
-				if residue[j]['atom_name'] == 'C':
-					for k in xrange(len(pdb_residues[i+1])):
-						if pdb_residues[i+1][k]['atom_name'] == 'N':
-							dx = residue[j]['x'] - pdb_residues[i+1][k]['x']
-							dy = residue[j]['y'] - pdb_residues[i+1][k]['y']
-							dz = residue[j]['z'] - pdb_residues[i+1][k]['z']
-							dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-							if dist < 1.4:
-								next_residue = pdb_residues[i+1]
-	
-	residue_name = residue[0]['residue_name']
-	bond_list = residues[residue_name]['bonds']
-
-	for atom in residue:
-		name = atom['atom_name']
-		atom_i = atom['atom_i']
-		for bond in bond_list:
-			if name == bond[0]: #we have a bond
-				if bond[1] in special_types:
-					if bond[1][0] == '-' and prev_residue is not None: #look to prev residue
-						for j in xrange(len(prev_residue)):
-							if prev_residue[j]['atom_name'] ==  bond[1][1:]:
-								bonds.append( (atom_i, prev_residue[j]['atom_i']) )
-					if bond[1][0] == '+' and next_residue is not None: #look to next residue
-						for j in xrange(len(next_residue)):
-							if next_residue[j]['atom_name'] ==  bond[1][1:]:
-								bonds.append( (atom_i, next_residue[j]['atom_i']) )
-				else:
-					for j in xrange(len(residue)):
-						if residue[j]['atom_name'] ==  bond[1]:
-							bonds.append( (atom_i, residue[j]['atom_i']) )
-		if name == 'SG':
-			atom_i = atom['atom_i']
-			for bond in disulfides:
-				if atom_i == bond[0]: #we have a disulfide bond
-					bonds.append( (atom_i, bond[1]) )
-	#imphis
-	imphi_list = residues[residue_name]['imphis']
-
-	for atom in residue:
-		name = atom['atom_name']
-		atom_i = atom['atom_i']
-		for imphi in imphi_list:
-			if name == imphi[0]: #we have an imphi
-				atom1 = None
-				atom2 = None
-				atom3 = None
-				if imphi[1] in special_types:
-					if imphi[1][0] == '-' and prev_residue is not None: #look to prev residue
-						for j in xrange(len(prev_residue)):
-							if prev_residue[j]['atom_name'] ==  imphi[1][1:]:
-								atom1 = prev_residue[j]['atom_i']
-					if imphi[1][0] == '+' and next_residue is not None: #look to next residue
-						for j in xrange(len(next_residue)):
-							if next_residue[j]['atom_name'] ==  imphi[1][1:]:
-								atom1 = next_residue[j]['atom_i']
-				else:
-					for j in xrange(len(residue)):
-						if residue[j]['atom_name'] ==  imphi[1]:
-							atom1 = residue[j]['atom_i']
-				if atom1 is None:
-					continue
-				#atom2
-				if imphi[2] in special_types:
-					if imphi[2][0] == '-' and prev_residue is not None: #look to prev residue
-						for j in xrange(len(prev_residue)):
-							if prev_residue[j]['atom_name'] ==  imphi[2][1:]:
-								atom2 = prev_residue[j]['atom_i']
-					if imphi[2][0] == '+' and next_residue is not None: #look to next residue
-						for j in xrange(len(next_residue)):
-							if next_residue[j]['atom_name'] ==  imphi[2][1:]:
-								atom2 = next_residue[j]['atom_i']
-				else:
-					for j in xrange(len(residue)):
-						if residue[j]['atom_name'] ==  imphi[2]:
-							atom2 = residue[j]['atom_i']
-				if atom2 is None:
-					continue
-				#atom3
-				if imphi[3] in special_types:
-					if imphi[3][0] == '-' and prev_residue is not None: #look to prev residue
-						for j in xrange(len(prev_residue)):
-							if prev_residue[j]['atom_name'] ==  imphi[3][1:]:
-								atom3 = prev_residue[j]['atom_i']
-					if imphi[3][0] == '+' and next_residue is not None: #look to next residue
-						for j in xrange(len(next_residue)):
-							if next_residue[j]['atom_name'] ==  imphi[3][1:]:
-								atom3 = next_residue[j]['atom_i']
-				else:
-					for j in xrange(len(residue)):
-						if residue[j]['atom_name'] ==  imphi[3]:
-							atom3 = residue[j]['atom_i']
-				if atom3 is None:
-					continue
-				imphis.append( (atom_i, atom1, atom2, atom3) )
-
-	#HB donors
-	donor_list = residues[residue_name]['donors']
-
-	for atom in residue:
-		name = atom['atom_name']
-		atom_i = atom['atom_i']
-		for donor in donor_list:
-			if name == donor[0]: #we have a hydrogen bond donor
-				for j in xrange(len(residue)):
-					if residue[j]['atom_name'] ==  donor[1]:
-						donors.append( (atom_i, residue[j]['atom_i']) )
-
-	#HB acceptors
-	acceptor_list = residues[residue_name]['acceptors']
-
-	for atom in residue:
-		name = atom['atom_name']
-		atom_i = atom['atom_i']
-		for acceptor in acceptor_list:
-			if name == acceptor[0]: #we have a hydrogen bond donor
-				if acceptor[1] is not None:
-					for j in xrange(len(residue)):
-						if residue[j]['atom_name'] ==  acceptor[1]:
-							acceptors.append( (atom_i, residue[j]['atom_i']) )
-				else:
-					acceptors.append( (atom_i, 0) )
-
-#angles
-thetas = set()
-for bond in bonds:
-	atom1 = bond[0]
-	atom2 = bond[1]
-	for bond2 in bonds:
-		atom3 = None
-		if atom2 == bond2[0] and atom1 != bond2[1]:
-			atom3 = bond2[1]
-		if atom2 == bond2[1] and atom1 != bond2[0]:
-			atom3 = bond2[0]
-		if atom3 is not None:
-			if (atom3, atom2, atom1) not in thetas:
-				thetas.add( (atom1, atom2, atom3) )
-		atom3 = None
-		if atom1 == bond2[0] and atom2 != bond2[1]:
-			atom3 = bond2[1]
-		if atom1 == bond2[1] and atom2 != bond2[0]:
-			atom3 = bond2[0]
-		if atom3 is not None:
-			if (atom3, atom1, atom2) not in thetas:
-				thetas.add( (atom2, atom1, atom3) )
-	
-
-#dihedrals
-phis = set()
-for theta in thetas:
-	atom1 = theta[0]
-	atom2 = theta[1]
-	atom3 = theta[2]
-	for bond2 in bonds:
-		atom4 = None
-		if atom3 == bond2[0] and atom2 != bond2[1]:
-			atom4 = bond2[1]
-		if atom3 == bond2[1] and atom2 != bond2[0]:
-			atom4 = bond2[0]
-		if atom4 is not None:
-			if (atom4, atom3, atom2, atom1) not in phis:
-				phis.add( (atom1, atom2, atom3, atom4) )
-		atom4 = None
-		if atom1 == bond2[0] and atom2 != bond2[1]:
-			atom4 = bond2[1]
-		if atom1 == bond2[1] and atom2 != bond2[0]:
-			atom4 = bond2[0]
-		if atom4 is not None:
-			if (atom4, atom1, atom2, atom3) not in phis:
-				phis.add( (atom3, atom2, atom1, atom4) )
-		
-
-psf_out = open(psf_file, 'w')
-
-psf_out.write("PSF\n")
-psf_out.write("\n")
-psf_out.write("       1 !NTITLE\n")
-psf_out.write(" REMARKS psf file from Acpharis create_psf\n")
-psf_out.write("\n")
-psf_out.write("%8g !NATOM\n" % len(atoms))
-for atom in atoms:
-	psf_out.write("%8g %-4s %-5s%-4s %-5s  %2g  % .6f       %7.4f           0\n" % (atom['atom_i'], atom['chain_id'], atom['residue_id'], 
-	   atom['residue_name'], atom['atom_name'], atom['atom_type_id'], atom['charge'], atom['mass']) )
-
-psf_out.write("\n")
-psf_out.write("%8g !NBOND: bonds" % len(bonds) )
-bond_i = 0
-for bond in bonds:
-	if bond_i % 4 == 0:
-		psf_out.write("\n")
-	psf_out.write("%8g%8g" % bond)
-	bond_i += 1
-psf_out.write("\n") #finish off end of bonds with new line
-
-psf_out.write("\n")
-psf_out.write("%8g !NTHETA: angles" % len(thetas))
-theta_i = 0
-for theta in thetas:
-	if theta_i % 3 == 0:
-		psf_out.write("\n")
-	psf_out.write("%8g%8g%8g" % theta)
-	theta_i += 1
-psf_out.write("\n") #finish off end of thetas with new line
-
-psf_out.write("\n")
-psf_out.write("%8g !NPHI: dihedralas" % len(phis))
-phi_i = 0
-for phi in phis:
-	if phi_i % 2 == 0:
-		psf_out.write("\n")
-	psf_out.write("%8g%8g%8g%8g" % phi)
-	phi_i += 1
-psf_out.write("\n") #finish off end of phis with new line
-
-psf_out.write("\n")
-psf_out.write("%8g !NIMPHI: impropers" % len(imphis))
-imphi_i = 0
-for imphi in imphis:
-	if imphi_i % 2 == 0:
-		psf_out.write("\n")
-	psf_out.write("%8g%8g%8g%8g" % imphi)
-	imphi_i += 1
-psf_out.write("\n") #finish off end of phis with new line
-
-psf_out.write("\n")
-psf_out.write("%8g !NDON: donors" % len(donors) )
-donor_i = 0
-for donor in donors:
-	if donor_i % 4 == 0:
-		psf_out.write("\n")
-	psf_out.write("%8g%8g" % donor)
-	donor_i += 1
-psf_out.write("\n") #finish off end of donors with new line
-
-psf_out.write("\n")
-psf_out.write("%8g !NACC: acceptors" % len(acceptors) )
-acceptor_i = 0
-for acceptor in acceptors:
-	if acceptor_i % 4 == 0:
-		psf_out.write("\n")
-	psf_out.write("%8g%8g" % acceptor)
-	acceptor_i += 1
-psf_out.write("\n") #finish off end of acceptors with new line
-
-psf_out.close()
+make_psf(pdb_file, rtf_file, psf_file)
